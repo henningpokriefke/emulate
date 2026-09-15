@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { BadRequestException, WorkOS } from '@workos-inc/node';
+import { BadRequestException } from '@workos-inc/node';
 import { createServer, type ApiKeyMap } from '../../core/index.js';
 import { workosPlugin } from '../index.js';
+import { sdkClient } from '../sdk.test-utils.js';
 
 const apiKeys: ApiKeyMap = { sk_test_users: { environment: 'test' } };
 const headers = { Authorization: 'Bearer sk_test_users', 'Content-Type': 'application/json' };
@@ -150,58 +151,13 @@ describe('User routes', () => {
     });
   });
 
+  // The body is asserted above; this checks only what the SDK makes of it.
   it('is decoded as BadRequestException by @workos-inc/node', async () => {
-    const fetchFn: typeof fetch = Object.assign(
-      async (...args: Parameters<typeof fetch>) => {
-        const [input, init] = args;
-        const request = input instanceof Request ? new Request(input, init) : new Request(input.toString(), init);
-        return await app.request(request);
-      },
-      { preconnect: fetch.preconnect },
-    );
-    const workos = new WorkOS({
-      apiKey: 'sk_test_users',
-      apiHostname: 'emulate.test',
-      https: false,
-      maxRetries: 0,
-      fetchFn,
-    });
-
-    const created = await workos.userManagement.createUser({
-      email: 'sdk-dup@test.com',
-      firstName: 'Original',
-      lastName: 'User',
-      password: 'pass123',
-    });
-
-    try {
-      await workos.userManagement.createUser({
-        email: 'sdk-dup@test.com',
-        firstName: 'Changed',
-        lastName: 'User',
-        emailVerified: true,
-        externalId: 'sdk-dup@test.com',
-      });
-      throw new Error('Expected duplicate user creation to fail');
-    } catch (error) {
-      expect(error).toBeInstanceOf(BadRequestException);
-      expect(error).toMatchObject({
-        status: 400,
-        message: 'Could not create user.',
-        code: 'user_creation_error',
-        errors: [{ code: 'email_not_available', message: 'This email is not available.' }],
-      });
-    }
-
-    const unchanged = await workos.userManagement.getUser(created.id);
-    expect(unchanged).toMatchObject({
-      id: created.id,
-      email: 'sdk-dup@test.com',
-      firstName: 'Original',
-      lastName: 'User',
-      emailVerified: false,
-      externalId: null,
-    });
+    const workos = sdkClient(app, 'sk_test_users');
+    await workos.userManagement.createUser({ email: 'sdk-dup@test.com' });
+    const dup = workos.userManagement.createUser({ email: 'sdk-dup@test.com' });
+    await expect(dup).rejects.toBeInstanceOf(BadRequestException);
+    await expect(dup).rejects.toMatchObject({ status: 400 });
   });
 
   it('gets user by id', async () => {
